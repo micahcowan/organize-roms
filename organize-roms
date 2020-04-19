@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -e -u -C
+
+alphabet='A B C D E F G H I J K L M N O P Q R S T U V W X Y Z'
+
+PARTITION=128
+
+main() {
+    REALLY=${1:-}
+    local all=$(cat) # slurp in from stdin
+    local pfx=''
+    subdivide "$all" "$pfx" 0
+}
+
+subdivide() {
+    local world=$1; shift
+    if test -z "$world"; then return; fi
+    local pfx=$1; shift
+    local level=$1; shift
+
+    local letter=''
+    local regex=''
+
+    for letter in $alphabet; do
+        local lmatch="[${letter}$(lc "$letter")]"
+        if test "$letter" = A; then
+            lmatch="(${lmatch}|[0-9]+)"
+        fi
+        if test "$level" -ne 0; then
+            regex='^(([A-Za-z0-9][^A-Za-z0-9]*){'"$level"'}'"$lmatch"
+        else
+            regex="^($lmatch"
+        fi
+        if test "$letter" = A; then
+            # "A" is also a catch-all dir
+            regex="${regex}"'|[^A-Za-z])'
+        else
+            regex="${regex}"')'
+        fi
+
+        matches=$(sfecho "$world" | egrep    "$regex" || true)
+        world=$(  sfecho "$world" | egrep -v "$regex" || true)
+
+        local count=$(sfecho "$matches" | wc -l)
+
+        if test -z "$matches"; then
+            : # No matches; nothing to do.
+        elif test "$count" -le "$PARTITION"; then
+            do_move "${pfx}${letter}" "$matches"
+        else
+            subdivide "$matches" "${pfx}${letter}" "$((level + 1))"
+        fi
+    done
+
+    if test -n "$world"; then
+        exec >&2
+        sfecho
+        sfecho '*** The following items are never moved! ***'
+        sfecho "$world"
+        sfecho $'\a'
+        exit 1
+    fi
+}
+
+REALLY=''
+do_move() {
+    local pfx=$(subdirize "$1"); shift
+    local srcs=$1; shift
+    local echo=''
+    if test -z "$REALLY"; then
+        echo='echo +'
+    else
+        mkdir -v -p "$pfx"
+    fi
+    sfecho "$srcs" | xargs -d'\n' $echo mv -v -t "$pfx"
+}
+
+subdirize() {
+    sfecho "$*" | sed -e 's/./&\/_/g' -e 's/\/_$//'
+}
+
+trn() {
+    # Truncate to 8 chars
+    sed 's/\(.\{0,8\}\).*/\1/'
+}
+
+sfecho() {
+    printf '%s\n' "$*"
+}
+
+lc() {
+    sfecho "$*" | tr '[:upper:]' '[:lower:]'
+}
+
+main "$@"
+exit 0
